@@ -52,7 +52,7 @@ telemetry-export = ["telemetry-export-dogstatsd", "telemetry-export-otlp"]
 telemetry-monoio = ["monoio", "telemetry-export", "fast-telemetry-export/monoio"]
 
 [dev-dependencies]
-criterion = "0.5"
+criterion = { version = "5.0.1", package = "codspeed-criterion-compat" }
 memchr = "2"
 tokio = { version = "1", features = ["io-util", "macros", "rt-multi-thread", "sync", "test-util"] }
 

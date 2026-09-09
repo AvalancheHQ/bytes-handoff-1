@@ -1,5 +1,7 @@
 # bytes-handoff
 
+[![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://app.codspeed.io/AvalancheHQ/bytes-handoff-1?utm_source=badge)
+
 `bytes-handoff` is a small Rust crate for moving owned byte buffers across
 async I/O boundaries.
 
@@ -582,6 +584,17 @@ For a defensible local baseline:
 
 ```bash
 ./bench/run-criterion-baseline.sh
+```
+
+The same Criterion benchmarks also run on every pull request through CodSpeed,
+which measures them with CPU simulation instead of wall clock time. Locally the
+benchmarks behave exactly like plain Criterion; under the CodSpeed runner they
+are measured once per benchmark and reported against the base branch. To
+reproduce a CodSpeed run locally:
+
+```bash
+cargo codspeed build --measurement-mode simulation
+codspeed run --mode simulation -- cargo codspeed run
 ```
 
 The baseline script uses `--sample-size 100 --measurement-time 5` by default.
