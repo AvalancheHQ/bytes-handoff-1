@@ -14,6 +14,15 @@ use crate::read_telemetry::{HandoffReadTelemetryHandle, HandoffReadTelemetryRunt
 pub const DEFAULT_SMALL_PREFIX_COPY_MAX: usize = 256;
 pub const DEFAULT_MONOIO_SPARSE_READ_COPY_DENOMINATOR: usize = 4;
 
+/// Allocation size used by the small-prefix copy arena.
+///
+/// Copied prefixes are carved out of a shared arena chunk instead of getting a
+/// dedicated allocation each. The point of the copy policy is preserved: a
+/// small prefix never retains the (potentially large) read buffer. Only the
+/// allocation cost changes, from one allocate/free pair per prefix to one per
+/// arena chunk.
+const PREFIX_COPY_ARENA_CHUNK: usize = 4 * 1024;
+
 #[derive(Clone, Copy, Debug)]
 pub struct HandoffBufferConfig {
     pub max_len: usize,
@@ -77,6 +86,7 @@ impl Default for HandoffBufferPolicy {
 #[derive(Debug)]
 pub struct HandoffBuffer {
     buf: BytesMut,
+    prefix_arena: BytesMut,
     config: HandoffBufferConfig,
     policy: HandoffBufferPolicy,
     #[cfg(feature = "telemetry")]
@@ -136,6 +146,7 @@ impl HandoffBuffer {
     ) -> Self {
         Self {
             buf: BytesMut::new(),
+            prefix_arena: BytesMut::new(),
             config,
             policy,
             #[cfg(feature = "telemetry")]
@@ -162,6 +173,7 @@ impl HandoffBuffer {
         }
         Ok(Self {
             buf: tail,
+            prefix_arena: BytesMut::new(),
             config,
             policy,
             #[cfg(feature = "telemetry")]
@@ -381,7 +393,7 @@ impl HandoffBuffer {
             });
         }
         if self.policy.should_copy_prefix(n) {
-            let prefix = Bytes::copy_from_slice(&self.buf[..n]);
+            let prefix = self.copy_prefix(n);
             self.buf.advance(n);
             #[cfg(feature = "telemetry")]
             self.record_split_prefix(n, true);
@@ -410,7 +422,7 @@ impl HandoffBuffer {
         #[cfg(feature = "telemetry")]
         let len = self.buf.len();
         if self.policy.should_copy_prefix(self.buf.len()) {
-            let bytes = Bytes::copy_from_slice(&self.buf);
+            let bytes = self.copy_prefix(self.buf.len());
             self.buf.clear();
             #[cfg(feature = "telemetry")]
             self.record_freeze_all(len);
@@ -442,6 +454,24 @@ impl HandoffBuffer {
         #[cfg(feature = "telemetry")]
         self.record_advance(cnt);
         Ok(())
+    }
+
+    /// Copies the first `n` buffered bytes into an owned `Bytes` carved out of
+    /// the shared prefix arena.
+    ///
+    /// The arena keeps one allocation alive for many copied prefixes, so the
+    /// hot path costs a copy plus a reference-count bump instead of an
+    /// allocate/free pair per prefix. Retention stays bounded by the arena
+    /// chunk size and never pins the read buffer.
+    fn copy_prefix(&mut self, n: usize) -> Bytes {
+        if n == 0 {
+            return Bytes::new();
+        }
+        if self.prefix_arena.capacity() < n {
+            self.prefix_arena = BytesMut::with_capacity(PREFIX_COPY_ARENA_CHUNK.max(n));
+        }
+        self.prefix_arena.extend_from_slice(&self.buf[..n]);
+        self.prefix_arena.split().freeze()
     }
 
     fn remaining_capacity(&self) -> usize {
